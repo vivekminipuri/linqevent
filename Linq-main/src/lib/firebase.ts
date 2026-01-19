@@ -15,6 +15,20 @@ const firebaseConfig = {
 // Initialize Firebase (Singleton pattern)
 const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApps()[0];
 
-export const auth = getAuth(app);
-export const db = getFirestore(app);
-export const storage = getStorage(app);
+// Export auth/db/storage only if app is initialized successfully
+//Safeguard for build time if env vars are missing
+let auth: any;
+let db: any;
+let storage: any;
+
+try {
+  if (typeof window !== 'undefined' || process.env.NEXT_PUBLIC_FIREBASE_API_KEY) {
+    auth = getAuth(app);
+    db = getFirestore(app);
+    storage = getStorage(app);
+  }
+} catch (error) {
+  console.warn("Firebase initialization failed:", error);
+}
+
+export { auth, db, storage };
