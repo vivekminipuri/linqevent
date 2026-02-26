@@ -8,59 +8,86 @@ service cloud.firestore {
       return request.auth != null;
     }
     
-    function isPlatformAdmin() {
+    // Check if the user is an admin of a specific club
+    function isClubAdmin(clubId) {
       return isAuthenticated() && 
-        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'platform_admin';
+        request.auth.uid in get(/databases/$(database)/documents/clubs/$(clubId)).data.adminIds;
     }
 
-    function isCollegeAdmin(collegeId) {
-       return isAuthenticated() && 
-        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.homeCollegeId == collegeId &&
-        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'college_admin';
-    }
-
-    // Users Collection
+    // --- Users Collection ---
     match /users/{userId} {
       allow read: if isAuthenticated();
-      allow write: if isAuthenticated() && request.auth.uid == userId; // Users can edit their own profile
+      // Allow users to create/update their own profile
+      allow write: if isAuthenticated() && request.auth.uid == userId;
+
+      // Subcollection for certificates
+      match /certificates/{certId} {
+        allow read: if isAuthenticated() && request.auth.uid == userId;
+        // Certificates are only written by system/admins (usually via Admin SDK, but we allow it here if needed for MVP)
+        allow write: if false; 
+      }
     }
 
-    // Colleges Collection
+    // --- Clubs Collection ---
+    match /clubs/{clubId} {
+      // Clubs are public to view
+      allow read: if true;
+      // Creation of clubs - for MVP we allow authenticated users, 
+      // but strictly this should be college_admin or platform_admin
+      allow create: if isAuthenticated();
+      // Updates only by club admins
+      allow update: if isClubAdmin(clubId);
+    }
+
+    // --- Events Collection ---
+    match /events/{eventId} {
+      // Events are public to view (landing page)
+      allow read: if true;
+      
+      // Creating events - only by club admins of the associated club
+      allow create: if isAuthenticated() && 
+        isClubAdmin(request.resource.data.clubId);
+        
+      // Updating events - only by club admins or the creator
+      allow update: if isAuthenticated() && (
+        isClubAdmin(resource.data.clubId) || 
+        resource.data.createdBy == request.auth.uid
+      );
+
+      // --- Registrations Subcollection ---
+      match /registrations/{regId} {
+        // Users can read their own registration
+        allow read: if isAuthenticated() && (
+          resource.data.userId == request.auth.uid || 
+          isClubAdmin(get(/databases/$(database)/documents/events/$(eventId)).data.clubId)
+        );
+        
+        // Users can register themselves
+        allow create: if isAuthenticated() && 
+          request.resource.data.userId == request.auth.uid;
+          
+        // Updates (attendance) only by club admins
+        allow update: if isAuthenticated() && 
+          isClubAdmin(get(/databases/$(database)/documents/events/$(eventId)).data.clubId);
+      }
+
+      // --- Feedback Subcollection ---
+      match /feedback/{fbId} {
+        // Public/Authenticated read for admins to see aggregate
+        allow read: if isAuthenticated() && (
+          request.auth.uid == fbId || // User can read their own
+          isClubAdmin(get(/databases/$(database)/documents/events/$(eventId)).data.clubId)
+        );
+        
+        // Users can submit feedback for themselves
+        allow write: if isAuthenticated() && request.auth.uid == fbId;
+      }
+    }
+
+    // --- Colleges Collection ---
     match /colleges/{collegeId} {
       allow read: if true;
-      allow write: if isPlatformAdmin(); // Only platform super-admins can create colleges
-
-      // Clubs Subcollection
-      match /clubs/{clubId} {
-        allow read: if true;
-        allow write: if isCollegeAdmin(collegeId);
-
-        // Events Subcollection
-        match /events/{eventId} {
-          allow read: if true;
-          // Only Club Admins listed in the parent club can write events
-          allow write: if isAuthenticated() && 
-            request.auth.uid in get(/databases/$(database)/documents/colleges/$(collegeId)/clubs/$(clubId)).data.adminIds;
-
-          // Registrations Subcollection
-          match /registrations/{regId} {
-            // Users can read their own registration
-            allow read: if isAuthenticated() && (
-              resource.data.userId == request.auth.uid || 
-              // Or if they are a club admin
-              request.auth.uid in get(/databases/$(database)/documents/colleges/$(collegeId)/clubs/$(clubId)).data.adminIds
-            );
-            
-            // Users can create a registration for themselves
-            allow create: if isAuthenticated() && 
-              request.resource.data.userId == request.auth.uid;
-              
-            // Only admins can update (e.g., mark attendance)
-            allow update: if isAuthenticated() && 
-               request.auth.uid in get(/databases/$(database)/documents/colleges/$(collegeId)/clubs/$(clubId)).data.adminIds;
-          }
-        }
-      }
+      allow write: if false; // Managed by platform admins via dashboard/admin
     }
   }
 }
