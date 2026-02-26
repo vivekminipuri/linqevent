@@ -80,6 +80,13 @@ export async function createClub(clubData: Omit<Club, 'id' | 'createdAt'>, admin
         const user = await findUserByEmail(adminEmail);
         if (user) {
             adminIds.push(user.uid);
+            // AUTO-UPDATE ROLE: Set user role to club_admin
+            try {
+                const { updateDoc } = await import('firebase/firestore');
+                await updateDoc(doc(db, 'users', user.uid), { role: 'club_admin' });
+            } catch (e) {
+                console.error("Failed to update user role during club creation", e);
+            }
         } else {
             // In a real app, we'd send an invite. For MVP, we might just warn or skip.
             console.warn(`User with email ${adminEmail} not found. Club created without linking admin.`);
